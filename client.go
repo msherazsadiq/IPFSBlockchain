@@ -9,9 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
 )
 
 // IPFSUploadResponse represents the response from IPFS
@@ -83,26 +81,14 @@ func getTailscalePeers() ([]string, error) {
 
 // sendHashToTailscalePeers sends the concatenated hash string to all Tailscale-connected peers
 func sendHashToTailscalePeers(hashes string, peers []string) {
-	// Create an HTTP client with a timeout of 3 seconds
-	client := &http.Client{
-		Timeout: 6 * time.Second, // Timeout set to 3 seconds
-	}
-
-	// Loop through peers and send the hash
 	for _, peer := range peers {
 		url := fmt.Sprintf("http://%s:8080/receive", peer) // Assuming peers listen on port 8080
-
-		// Send the HTTP POST request
-		resp, err := client.Post(url, "text/plain", strings.NewReader(hashes))
+		resp, err := http.Post(url, "text/plain", strings.NewReader(hashes))
 		if err != nil {
 			fmt.Printf("Error sending hash to %s: %v\n", peer, err)
 			continue
 		}
-
-		// Always close the response body after processing
-		defer resp.Body.Close()
-
-		// Check if the status code is OK
+		resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
 			fmt.Printf("Successfully sent hash to %s\n", peer)
 		} else {
@@ -116,6 +102,7 @@ func main() {
 	files := []string{"algo.py", "data.txt"}
 	fileHashes := make(map[string]string)
 
+	// Upload files and store hashes
 	for _, filePath := range files {
 		hash, err := uploadToIPFS(filePath)
 		if err != nil {
@@ -126,11 +113,10 @@ func main() {
 		fmt.Printf("Uploaded %s to IPFS with hash: %s\n", filePath, hash)
 	}
 
-	// Concatenate hashes with extensions into a single comma-separated string
+	// Concatenate hashes into a single comma-separated string
 	hashList := []string{}
-	for filePath, hash := range fileHashes {
-		extension := filepath.Ext(filePath) // Extract the file extension
-		hashList = append(hashList, fmt.Sprintf("%s|%s", hash, extension))
+	for _, hash := range fileHashes {
+		hashList = append(hashList, hash)
 	}
 	hashes := strings.Join(hashList, ",")
 

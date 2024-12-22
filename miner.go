@@ -199,44 +199,33 @@ func handleReceive(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// Split the received hash string by commas
 	hashes := strings.Split(string(body), ",")
 	if len(hashes) != 2 {
 		http.Error(w, "Expected two hashes: one for the Python file and one for the text file", http.StatusBadRequest)
 		return
 	}
 
-	// Parse hashes with extensions
-	pythonParts := strings.SplitN(hashes[0], "|", 2)
-	txtParts := strings.SplitN(hashes[1], "|", 2)
+	// Retrieve Python and text file hashes
+	pythonHash := strings.TrimSpace(hashes[0])
+	txtHash := strings.TrimSpace(hashes[1])
 
-	if len(pythonParts) != 2 || len(txtParts) != 2 {
-		http.Error(w, "Hashes must include file extensions", http.StatusBadRequest)
+	// Ensure valid file types for Python and text files
+	pythonExt := ".py"
+	txtExt := ".txt"
+
+	// Create a temporary directory for storing the files
+	tempDir := filepath.Join(os.TempDir(), "myapp_data")
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create temp directory: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	pythonHash, pythonExt := strings.TrimSpace(pythonParts[0]), strings.TrimSpace(pythonParts[1])
-	txtHash, txtExt := strings.TrimSpace(txtParts[0]), strings.TrimSpace(txtParts[1])
+	// Define the file paths for the downloaded Python and text files
+	pythonFilename := filepath.Join(tempDir, fmt.Sprintf("%s%s", pythonHash, pythonExt))
+	txtFilename := filepath.Join(tempDir, fmt.Sprintf("%s%s", txtHash, txtExt))
 
-	// Ensure the Python file has the .py extension
-	if !strings.HasSuffix(pythonExt, ".py") {
-		pythonExt = ".py"
-	}
-
-	// Ensure the text file has the .txt extension
-	if !strings.HasSuffix(txtExt, ".txt") {
-		txtExt = ".txt"
-	}
-
-	// Save files in the current directory
-	currentDir, err := os.Getwd()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get current directory: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	pythonFilename := filepath.Join(currentDir, fmt.Sprintf("%s%s", pythonHash, pythonExt))
-	txtFilename := filepath.Join(currentDir, fmt.Sprintf("%s%s", txtHash, txtExt))
-
+	// Download Python and text files from IPFS
 	fmt.Printf("Downloading Python file with hash: %s\n", pythonHash)
 	if err := downloadFromIPFS(pythonHash, pythonFilename); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to download Python file: %v", err), http.StatusInternalServerError)
@@ -249,6 +238,7 @@ func handleReceive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Execute the Python file with the text file as an argument
 	fmt.Printf("Executing Python file: %s with argument: %s\n", pythonFilename, txtFilename)
 	result, err := executePythonFile(pythonFilename, txtFilename)
 	if err != nil {
