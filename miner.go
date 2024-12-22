@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,9 +9,37 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 const IPFSDownloadURL = "http://127.0.0.1:8080/ipfs/"
+
+// Transaction represents a transaction in the blockchain
+type Transaction struct {
+	ID   string // The IP address or unique identifier of the transaction
+	Data string // The result or output of the computation
+}
+
+// Block represents a block in the blockchain
+type Block struct {
+	PrevHash     string        // Hash of the previous block in the chain
+	Transactions []Transaction // List of transactions included in this block
+	Nonce        int           // Nonce for proof-of-work
+	Hash         string        // Hash of the current block
+	PrevCID      string        // IPFS CID of the previous block
+	BlockNumber  int           // The block number in the chain (0 for genesis block)
+	Timestamp    int64         // Unix timestamp of when the block was created
+	Creator      string        // Identifier of the node that created the block
+	Difficulty   int           // Mining difficulty level
+}
+
+var transactionPool []Transaction
+var mutex sync.Mutex   // Mutex to synchronize access to the transaction pool
+var currentBlock Block // Each miner has their own current block
+
+var previousBlockCID string = "-1"  // Genesis block's PrevCID will be -1 initially
+var previousBlockHash string = "-1" // Genesis block's PrevHash will be empty initially
 
 // downloadFromIPFS downloads a file from IPFS using the provided hash
 func downloadFromIPFS(hash, filename string) error {
@@ -54,7 +83,110 @@ func removeFile(filename string) error {
 	return nil
 }
 
+// proofOfWork performs the proof-of-work algorithm to find a valid nonce
+func proofOfWork(block Block, difficulty int) int {
+	nonce := 0
+	var hash string
+	for {
+		// Generate the hash of the block with the current nonce
+		hash = generateHash(block, nonce)
+
+		// Check if the hash satisfies the difficulty condition
+		if validProof(hash, difficulty) {
+			break
+		}
+
+		nonce++
+	}
+	return nonce
+}
+
+// validProof validates the proof of work by checking if the hash has the required number of leading zeros
+func validProof(hash string, difficulty int) bool {
+	prefix := strings.Repeat("0", difficulty)
+	return strings.HasPrefix(hash, prefix)
+}
+
+// generateHash generates a SHA256 hash for the block with the given nonce
+func generateHash(block Block, nonce int) string {
+	block.Nonce = nonce
+	blockData := fmt.Sprintf("%s%d%d%s", block.PrevHash, block.BlockNumber, nonce, block.Transactions)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(blockData)))
+}
+
+// mineBlock mines a new block using proof of work and adds it to the local chain
+func mineBlock(miner string, difficulty int) {
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if len(transactionPool) >= 3 {
+		// Create a new block
+		block := Block{
+			PrevHash:     previousBlockHash,            // The hash of the previous block (starting with -1 for the genesis block)
+			PrevCID:      previousBlockCID,             // Set the PrevCID of the previous block
+			BlockNumber:  currentBlock.BlockNumber + 1, // Increment BlockNumber
+			Transactions: transactionPool[:3],          // Take the first 3 transactions
+			Timestamp:    time.Now().Unix(),            // Set the current timestamp
+			Creator:      miner,                        // Set the creator to the miner's identifier
+			Difficulty:   difficulty,                   // Set the difficulty
+		}
+
+		// Run Proof of Work in a Goroutine
+		go func() {
+			nonce := proofOfWork(block, difficulty)
+			block.Nonce = nonce
+			block.Hash = generateHash(block, nonce)
+
+			// Add the mined block to the local chain (after uploading it to IPFS)
+			// Save the block's CID after it's uploaded to IPFS
+			go uploadBlockToIPFS(block)
+
+			// Update the previous block's CID to this block's CID after successful upload
+			mutex.Lock()
+			previousBlockHash = block.Hash
+			previousBlockCID = block.PrevCID
+			currentBlock = block // Update current block to the mined one
+			mutex.Unlock()
+
+			// Broadcast the block to other miners
+			go broadcastBlock(block)
+
+			// Clear the processed transactions from the pool
+			mutex.Lock()
+			transactionPool = transactionPool[3:] // Remove processed transactions
+			mutex.Unlock()
+		}()
+	}
+}
+
+// broadcastBlock broadcasts the mined block to other miners for validation
+func broadcastBlock(block Block) {
+	// Send the block to all other miners for validation
+	fmt.Printf("\n\nBroadcasting Block:\n\n %+v\n\n", block)
+	// Implement your broadcasting logic here (e.g., send it over a network)
+}
+
+// uploadBlockToIPFS uploads the mined block to IPFS
+func uploadBlockToIPFS(block Block) {
+	// Implement your IPFS upload logic here
+	//fmt.Printf("Uploading Block to IPFS: %+v\n", block)
+	// Here you would typically use a Go IPFS client to upload the block to IPFS
+	// Example: ipfs.AddBlock(block)
+}
+
+// addTransaction adds a new transaction to the transaction pool
+func addTransaction(transaction Transaction) {
+	mutex.Lock()
+	defer mutex.Unlock()
+	transactionPool = append(transactionPool, transaction)
+}
+
+// handleReceive handles incoming requests with transaction hashes
 func handleReceive(w http.ResponseWriter, r *http.Request) {
+	// Log the client's IP address
+	clientIP := strings.Split(r.RemoteAddr, ":")[0] // Extract IP address only
+	fmt.Printf("Received request from IP: %s\n", clientIP)
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
@@ -136,6 +268,12 @@ func handleReceive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to remove text file: %v", err), http.StatusInternalServerError)
 		return
 	}
+
+	// Add transaction to pool
+	addTransaction(Transaction{ID: clientIP, Data: result})
+
+	// Start mining the block
+	go mineBlock(clientIP, 4)
 
 	fmt.Println("Hashes processed successfully")
 	w.WriteHeader(http.StatusOK)

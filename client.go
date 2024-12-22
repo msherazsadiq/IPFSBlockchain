@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // IPFSUploadResponse represents the response from IPFS
@@ -82,14 +83,26 @@ func getTailscalePeers() ([]string, error) {
 
 // sendHashToTailscalePeers sends the concatenated hash string to all Tailscale-connected peers
 func sendHashToTailscalePeers(hashes string, peers []string) {
+	// Create an HTTP client with a timeout of 3 seconds
+	client := &http.Client{
+		Timeout: 6 * time.Second, // Timeout set to 3 seconds
+	}
+
+	// Loop through peers and send the hash
 	for _, peer := range peers {
 		url := fmt.Sprintf("http://%s:8080/receive", peer) // Assuming peers listen on port 8080
-		resp, err := http.Post(url, "text/plain", strings.NewReader(hashes))
+
+		// Send the HTTP POST request
+		resp, err := client.Post(url, "text/plain", strings.NewReader(hashes))
 		if err != nil {
 			fmt.Printf("Error sending hash to %s: %v\n", peer, err)
 			continue
 		}
-		resp.Body.Close()
+
+		// Always close the response body after processing
+		defer resp.Body.Close()
+
+		// Check if the status code is OK
 		if resp.StatusCode == http.StatusOK {
 			fmt.Printf("Successfully sent hash to %s\n", peer)
 		} else {
