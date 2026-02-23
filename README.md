@@ -13,18 +13,6 @@ This project implements a decentralized system that integrates IPFS, blockchain,
 - Proof-of-Work based block mining
 - Distributed miner nodes
 
----
-
-## Project Structure
-
-.
-├── algo.py # Dijkstra algorithm for computation
-├── data.txt # Input graph data
-├── client.go # Uploads files to IPFS and sends hashes to peers
-├── miner.go # Receives hashes, executes computation, mines blocks
-└── README.md
-
-
 
 ---
 
